@@ -30,7 +30,10 @@ if __name__ == '__main__':
     parser.add_argument('--example_item', type=str, default='different', help='Example item type (same, different or None)')
     parser.add_argument('--tasks', nargs='+', default=['generation', 'discrimination', 'recognition'], type=str, help='Tasks to run the experiment on')
     parser.add_argument('--filter_items_list', nargs='+', type=str, help='Item IDs to run the experiment on', default=None)
+    parser.add_argument('--logprobs', type=bool, default=True, help='Logprobs', action=argparse.BooleanOptionalAction)
     parser.add_argument('--file_names', nargs='+', type=str, help='File names', default=None)
+    parser.add_argument('--intermediate_results', type=bool, default=False, help='Save intermediate results', action=argparse.BooleanOptionalAction)
+    parser.add_argument('--query_timeout', type=int, default=60, help='Query timeout')
 
     args = parser.parse_args()
 
@@ -92,12 +95,12 @@ if __name__ == '__main__':
                 else False,
             n_iter_seed = args.n_iter_seed
         )
-        
+
         # Run the experiment
         print('Running the experiment...')
         results = run_experiment(
             input_prompts = dataset.x, 
-            logprobs = True,
+            logprobs = args.logprobs,
             models = args.models,
             system_prompt = "What is the concept that best describes the following task? Only give the answer, no other words or text."
                 if task == 'recognition' 
@@ -105,10 +108,13 @@ if __name__ == '__main__':
             max_tokens = 100 
                 if task == 'generation' 
                 else 5,
-            results_path = file_path
+            query_timeout = args.query_timeout,
+            results_path = file_path,
+            intermediate_path = os.path.join(results_dir, f'{file_name}_temp.json') if args.intermediate_results else None
         )
 
         # Save the dataset configuration
         results['dataset_config'] = dataset.get_config()
+        
         # Save the results
         json.dump(results, open(file_path, 'w'), indent=4)

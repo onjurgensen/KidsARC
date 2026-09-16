@@ -12,6 +12,8 @@ MODEL_IDS:
   - google/gemma-2-27b-it
   - gpt-4-turbo-2024-04-09
   - gpt-4o-2024-05-13
+  - deepseek-reasoner
+  - deepseek-chat
 MODEL_NAMES:
   - Mixtral-8x7B
   - Mixtral-8x22B
@@ -24,3 +26,5 @@ MODEL_NAMES:
   - Gemma-2 27B
   - GPT-4
   - GPT-4o
+  - DeepSeek-R1
+  - DeepSeek-V3

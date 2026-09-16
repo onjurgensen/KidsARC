@@ -1,4 +1,5 @@
 import time
+import sys
 import os
 import json
 from typing import *
@@ -15,16 +16,18 @@ def query_model(
         chat: bool = True,
         logprobs: bool = False,
         echo: bool = False,
+        stream: bool = False,
         temperature: float = 0.0,
         max_tokens: int = 100,
     ) -> Dict:
     client_api = client.__class__.__name__
     # Set up the call configuration
     call_config = {
+        'stream': stream,
         'model': model,
         'temperature': temperature,
         'max_tokens': max_tokens,
-        'logprobs': int(logprobs) if client_api == 'Together' else logprobs # Convert to binary for Together API
+        'logprobs': int(logprobs) if client_api == 'Together' else logprobs
     }
 
     if chat:
@@ -42,11 +45,16 @@ def query_model(
     
     # Call the model
     response = client.chat.completions.create(**call_config) if chat else client.completions.create(**call_config)
-    
+
     # Extract the data
     response = response.choices[0]
     data = {'message': response.message.content if chat else response.text}
+
+    # Extract reasoning if available
+    if hasattr(response.message, 'reasoning_content'):
+        data['reasoning_content'] = response.message.reasoning_content
     
+    # Extract logprobs
     if logprobs:
         if client_api == 'Together':
             data.update({
@@ -59,8 +67,8 @@ def query_model(
                 'logprobs': [token.logprob for token in response.logprobs.content]
             })
 
+    # Prepend the echo to the message
     if echo:
-        # Prepend the echo to the message
         data['tokens'] = response.prompt[0].logprobs.tokens + data['tokens']
         data['logprobs'] = response.prompt[0].logprobs.token_logprobs + data['logprobs']
 
@@ -71,6 +79,7 @@ def run_experiment(
         input_prompts: List[str],
         models: List[str],
         results_path: str,
+        intermediate_path: str = None,
         system_prompt: str = None,
         query_timeout: int = 60,  # Timeout in seconds for each model query
         rate_limit: float = 0.02,  # Time to sleep between queries
@@ -84,14 +93,17 @@ def run_experiment(
     # Initialize Client APIs
     together_client = Together()
     openai_client = OpenAI()
+    deepseek_client = OpenAI(base_url="https://api.deepseek.com", api_key=os.getenv("DEEPSEEK_API_KEY"))
 
     # Get available models ids
     together_models = [model.id for model in together_client.models.list()]
     openai_models = [model.id for model in openai_client.models.list()]
+    deepseek_models = [model.id for model in deepseek_client.models.list()]
+    all_models = together_models + openai_models + deepseek_models
     
     # Check if the models are available
     for model in models:
-        if model not in together_models and model not in openai_models:
+        if model not in all_models:
             raise ValueError(f"Model {model} not found in available models")
 
     # Initialize dictionary to store the data
@@ -110,13 +122,25 @@ def run_experiment(
         print(f'_____ Model: {model} ({idx+1}/{len(models)}) _____')
 
         # Get the client for the model
-        client = together_client if model in together_models else openai_client
-
-        # Initialize a list to store the model responses
+        if model in together_models:
+            client = together_client 
+        elif model in openai_models:
+            client = openai_client
+        elif "deepseek" in model:
+            client = deepseek_client
+            kwargs['logprobs'] = False # Deepseek does not support logprobs
+        
+        # Load intermediate results (if available)
         model_responses = []
-
+        if intermediate_path and os.path.exists(intermediate_path):
+            model_responses = json.load(open(intermediate_path, 'r'))
+            print(f"Resuming from {len(model_responses)} completed prompts")
+        
+        # Resume from last completed prompt
+        prompts = input_prompts[len(model_responses):]
+            
         # Input all the items to the model
-        for input_prompt in tqdm(input_prompts):
+        for input_prompt in tqdm(prompts, desc=f"Processing {model}"):
             try:
                 signal.alarm(query_timeout)  # Start the timeout clock
                 response = query_model(client, model, input_prompt, system_prompt, **kwargs)
@@ -126,14 +150,24 @@ def run_experiment(
             except TimeoutError:
                 print(f"Query for {model} timed out!")
                 break
+            except json.JSONDecodeError as e:
+                if "Expecting value: line 1 column 1 (char 0)" in str(e):
+                    print("Critical Error: Empty or invalid JSON response. Stopping script.")
+                    sys.exit(1)
             except Exception as e:
                 print(f"Calling {model} failed: {str(e)}")
                 break
+                
+            if intermediate_path:
+                json.dump(model_responses, open(intermediate_path, 'w'))
         
-        # Check if all the items have been queried
+        # Save results
         if len(model_responses) == len(input_prompts):
             data['data'][model] = model_responses
-            # Save intermediate results
             json.dump(data, open(results_path, 'w'), indent=4)
+            
+            # Remove intermediate file
+            if intermediate_path:
+                os.remove(intermediate_path)
 
     return data

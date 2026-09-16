@@ -21,6 +21,44 @@ generation_example = Eval(os.path.join(RESULTS_DIR, run_dir, 'generation.json'))
 discrimination_example = Eval(os.path.join(RESULTS_DIR, run_dir, 'discrimination.json'))
 recognition_example = Eval(os.path.join(RESULTS_DIR, run_dir, 'recognition.json'))
 
+run_dir = 'run_answeropt_2024-11-12'
+discrimination_answeropt = Eval(os.path.join(RESULTS_DIR, run_dir, 'discrimination.json'))
+
+
+robustness_df = pd.DataFrame({
+    'model': discrimination_answeropt.models_names,
+    'color': np.nan,
+    'example': np.nan,
+    'answeropt': np.nan
+})
+
+for mirror in ['color', 'example', 'answeropt']:
+    mirror_eval = eval(f"discrimination_{mirror}")
+    robustness_df[mirror] = mirror_eval.robustness
+    
+    print(
+        f'{mirror}\n{np.mean(mirror_eval.robustness).round(2)}\n'
+    )
+
+robustness_df = robustness_df.sort_values(by=['color', 'example', 'answeropt'], ascending=True)
+
+plt.figure(figsize=(10, 6))
+width = 0.25  # Width of each bar
+x = range(len(MODEL_NAMES))  # X positions for the bars
+
+# Plotting each category
+plt.bar(x, robustness_df['color'], width, color='blue', alpha=0.5, label='Color')
+plt.bar([i + width for i in x], robustness_df['example'], width, color='grey', alpha=0.5, label='Example')
+plt.bar([i + 2 * width for i in x], robustness_df['answeropt'], width, color='green', alpha=0.5, label='AnswerOpt')
+
+# Customizing plot
+plt.xticks([i + width for i in x], [get_model_name(model) for model in robustness_df['model']], rotation=45, ha='right', fontsize=14)
+plt.yticks(fontsize=14)
+plt.ylabel('Robustness', fontsize=14)
+plt.legend(fontsize=12)
+plt.tight_layout()
+
+
 # Combine the dataframes
 df = pd.DataFrame({})
 for task in ['generation', 'discrimination', 'recognition']:

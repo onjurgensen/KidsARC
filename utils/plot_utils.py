@@ -3,6 +3,7 @@ from typing import *
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.colors import Normalize, ListedColormap
+import seaborn as sns
 
 def ARC_cmap() -> Dict:
     '''
@@ -103,11 +104,52 @@ def plot_item(
     else:
         plt.show()
 
-def get_percentage_ticks(df: pd.DataFrame) -> Tuple[np.array, List[str]]:
+def get_percentage_ticks(df: pd.DataFrame, num=6) -> Tuple[np.array, List[str]]:
     max_val = df.to_numpy().max()
     max_val = (max_val // 0.1 + 1) * 0.1 # round up to the nearest 10%
-    linespace = np.linspace(0, max_val, num=6)
+    linespace = np.linspace(0, max_val, num=num)
     return linespace, [f'{x:.0%}' for x in linespace]
+
+def plot_correlation_matrix(corr_mat, vmin=-1, vmax=1, annot=True, square=True, lower=True, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+    mask = np.tril(corr_mat) == 0 if lower else None
+
+    heatmap = sns.heatmap(
+        corr_mat,
+        cmap='coolwarm',
+        vmin=vmin,
+        vmax=vmax,
+        annot=annot,
+        square=square,
+        mask=mask,
+        linewidths=0,  # Disable bounding boxes for all cells
+        annot_kws={"size": 12},  # Increase annotation font size
+        # italic
+        cbar_kws={'label': 'r'},  # Add colorbar label
+        ax=ax,  # Use provided Axes
+    )
+
+    # Increase the font size of the colorbar ticks
+    heatmap.figure.axes[-1].tick_params(labelsize=14)
+    heatmap.figure.axes[-1].yaxis.label.set_size(16)
+    # vertical 
+    heatmap.figure.axes[-1].yaxis.label.set_rotation(0)
+    heatmap.set_yticklabels(heatmap.get_yticklabels(), fontsize=14)
+    heatmap.set_xticklabels(heatmap.get_xticklabels(), fontsize=14)
+
+    # Add bounding boxes only for non-masked cells
+    if lower:
+        for i in range(corr_mat.shape[0]):
+            for j in range(corr_mat.shape[1]):
+                if not mask[i, j]:  # Only if the cell is not masked
+                    rect = plt.Rectangle(
+                        (j, i), 1, 1, fill=False, edgecolor='black', linewidth=0.5
+                    )
+                    ax.add_patch(rect)
+    if ax is None:
+        plt.show()
 
 
 # from matplotlib import cm
