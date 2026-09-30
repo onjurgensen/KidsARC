@@ -14,6 +14,11 @@ scripts/items_to_human_df.py
 data/items.json
 data/items_old_.json
 data/sae
+data/human_data_collection
+data/old/human_data_old
+data/new_items
+data/preprocessed
+
 
 notes.org
 

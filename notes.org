@@ -31,6 +31,16 @@
 - copy option
 - run on more items
 
+[17. 09. 26]
+- issues with row vs. pixel
+    - Human discrimination scoring broken (human_preprocessing.score_discrimination): matches against D_Matrix_Row, which never appears in the data. Row bar is 0 by construction, pixel bar pools both variants. Fix: split on matrix_level, count response == 'D_Matrix'. Plotted 3.3%/0%; correct 0% pixel / 6.5% row. Generation path unaffected.
+    - Hardcoded axhline(y=0.005, label='Human') in rotation figure — not derived from the data.
+    - ttest_ind on per-model means should be paired.
+    - range(11) hardcoded; 13 models in globals.yml.
+    - Rotation figure shows row only (pixel lines commented out) but legend says "LLMs".
+    - Assert checks row counts, not item identity.
+
+
 
 
 ===========

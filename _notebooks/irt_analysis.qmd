@@ -1,0 +1,580 @@
+---
+title: "Kids ARC: IRT analysis"
+subtitle: "Rasch (1PL) comparison of human and LLM performance"
+author: "OJ"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: show
+    embed-resources: true
+    fig-width: 7
+    fig-height: 5
+execute:
+  warning: false
+  message: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+# knitr::opts_knit$set(root.dir = here::here())
+```
+
+```{r}
+#| label: libraries
+
+library(mirt)
+library(tidyr)
+library(MASS)     # load before dplyr so dplyr::select isn't masked
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(ggExtra)
+```
+
+## Data
+
+```{r}
+#| label: load-data
+df_human <- read.csv("../data/preprocessed/human_generation.csv")
+df_llm   <- read.csv("../data/preprocessed/llm_generation.csv")
+df_items <- read.csv("../data/preprocessed/items.csv")
+df_items$size <- as.factor(df_items$size)
+```
+
+## Preprocessing functions
+
+`simple_irt_preprocess()` averages `concept_response` within participant (or
+model) and `item_main_id`, pivots to a wide item matrix, and reports items at
+0% or 100% correct.
+
+```{r}
+#| label: fn-preprocess
+
+simple_irt_preprocess <- function(df, type = c("human", "llm")) {
+  type <- match.arg(type)
+  id_col <- if (type == "human") "participant" else "model"
+
+  df_avg <- df %>%
+    dplyr::summarise(
+      concept_response = mean(concept_response, na.rm = TRUE),
+      .by = c(!!rlang::sym(id_col), item_main_id)
+    )
+
+  wide <- df_avg %>%
+    dplyr::select(!!rlang::sym(id_col), item_main_id, concept_response) %>%
+    tidyr::pivot_wider(names_from = item_main_id, values_from = concept_response)
+
+  if (type == "human") {
+    wide <- wide %>% dplyr::filter(participant != 0)
+  }
+
+  wide <- wide %>% dplyr::select(-!!rlang::sym(id_col))
+
+  item_names <- colnames(wide)
+  item_means <- colMeans(wide, na.rm = TRUE)
+
+  all_0_items <- item_names[item_means == 0]
+  all_1_items <- item_names[item_means == 1]
+  bad_items <- c(all_0_items, all_1_items)
+
+  if (length(all_0_items) > 0) {
+    message("Items with 0% correct (possible scoring bug): ",
+            paste(all_0_items, collapse = ", "))
+  }
+  if (length(all_1_items) > 0) {
+    message("Items with 100% correct (possible scoring bug): ",
+            paste(all_1_items, collapse = ", "))
+  }
+
+  list(wide = wide, bad_items = bad_items)
+}
+```
+
+`find_constant_items()` catches items that collapse to a single response
+category *after* rounding — these cannot be estimated by `mirt`.
+
+```{r}
+#| label: fn-constant-items
+
+find_constant_items <- function(wide) {
+  colnames(wide)[sapply(wide, function(x) length(unique(na.omit(x))) < 2)]
+}
+```
+
+Shared cleaning step, so the human and LLM branches stay identical:
+
+```{r}
+#| label: fn-clean
+
+clean_for_irt <- function(res, label) {
+  wide <- res$wide %>% dplyr::select(-dplyr::any_of(res$bad_items))
+  wide <- wide %>% dplyr::mutate(dplyr::across(dplyr::everything(), round))
+
+  constant_items <- find_constant_items(wide)
+  if (length(constant_items) > 0) {
+    message(label, " items constant after rounding (dropped): ",
+            paste(constant_items, collapse = ", "))
+  }
+  wide %>% dplyr::select(-dplyr::any_of(constant_items))
+}
+```
+
+## Build item matrices
+
+```{r}
+#| label: preprocess-human
+
+res_human  <- simple_irt_preprocess(df_human, type = "human")
+wide_human <- clean_for_irt(res_human, "Human")
+
+dim(wide_human)
+```
+
+```{r}
+#| label: preprocess-llm
+
+res_llm  <- simple_irt_preprocess(df_llm, type = "llm")
+wide_llm <- clean_for_irt(res_llm, "LLM")
+
+dim(wide_llm)
+```
+
+## Item accuracy (% correct)
+
+::: callout-note
+These means come from the **cleaned** matrices, so they describe the same item
+set the Rasch models below are fit on. The original script computed them from
+`res_*$wide` (before dropping bad and constant items), which meant the accuracy
+plots and the IRT models were describing different item sets.
+:::
+
+```{r}
+#| label: item-means
+
+item_means_human <- colMeans(res_human$wide, na.rm = TRUE)
+item_means_llm   <- colMeans(res_llm$wide,   na.rm = TRUE)
+
+broken_items <- c("NCz8AP")
+
+item_means_human <- item_means_human[setdiff(names(item_means_human), broken_items)]
+item_means_llm   <- item_means_llm[setdiff(names(item_means_llm),   broken_items)]
+
+hist(item_means_human, main = "Distribution of % correct — humans", xlab = "% correct")
+hist(item_means_llm,   main = "Distribution of % correct — LLMs",   xlab = "% correct")
+```
+
+```{r}
+#| label: accuracy-join
+
+common_items <- intersect(names(item_means_human), names(item_means_llm))
+
+df_plot <- data.frame(
+  item  = common_items,
+  human = item_means_human[common_items],
+  llm   = item_means_llm[common_items]
+) %>%
+  dplyr::left_join(df_items, by = c("item" = "main_id"))
+
+# how many items survived into the comparison, and did any fail to match df_items?
+c(
+  human_items  = length(item_means_human),
+  llm_items    = length(item_means_llm),
+  common       = length(common_items),
+  unmatched    = sum(is.na(df_plot$concept))
+)
+```
+
+```{r}
+#| label: accuracy-fit
+
+fit <- lm(llm ~ human, data = df_plot)
+r2  <- summary(fit)$r.squared
+r2
+```
+
+### Human vs LLM accuracy
+
+```{r}
+#| label: fig-accuracy-labelled
+#| fig-cap: "Item accuracy, humans vs LLMs, with item labels."
+
+ggplot(df_plot, aes(x = human, y = llm, label = item)) +
+  geom_point(color = "steelblue", alpha = 0.7, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  ggrepel::geom_text_repel(size = 3, max.overlaps = 15) +
+  coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(
+    title    = "Item difficulty: human vs LLM",
+    subtitle = paste0("R² = ", round(r2, 3)),
+    x = "% correct (human)",
+    y = "% correct (LLM)"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+# the hard for everyone's
+df_plot$item[df_plot$human < 0.1 & df_plot$llm < 0.1]
+# the hard for LLM's 
+df_plot$item[df_plot$human > 0.6 & df_plot$llm == 0]
+# the hard for Humans
+df_plot$item[df_plot$human < 0.5 & df_plot$llm > 0.5]
+```
+
+### Coloured by concept
+
+```{r}
+#| label: fig-accuracy-concept
+#| fig-cap: "Item accuracy coloured by concept."
+
+ggplot(df_plot, aes(x = human, y = llm, color = concept)) +
+  geom_point(alpha = 0.8, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(
+    title    = "Item difficulty: human vs LLM",
+    subtitle = paste0("R² = ", round(r2, 3)),
+    x = "% correct (human)", y = "% correct (LLM)", color = "Concept"
+  ) +
+  theme_minimal()
+```
+
+### Coloured by grid size
+
+```{r}
+#| label: fig-accuracy-size
+#| fig-cap: "Item accuracy coloured by grid size."
+
+ggplot(df_plot, aes(x = human, y = llm, color = size)) +
+  geom_point(alpha = 0.8, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(
+    title    = "Item difficulty: human vs LLM",
+    subtitle = paste0("R² = ", round(r2, 3)),
+    x = "% correct (human)", y = "% correct (LLM)",
+    color = "Grid size"   # was mislabelled "Concept" in the original script
+  ) +
+  theme_minimal()
+```
+### Colored by human rt
+
+```{r}
+#| label: fig-accuracy-rt
+#| fig-cap: "Item accuracy coloured by human rt."
+
+
+item_rt_human <- df_human %>%
+  dplyr::filter(participant != 0) %>%
+  dplyr::summarise(rt = mean(rt, na.rm = TRUE), .by = c(participant, item_main_id)) %>%
+  dplyr::summarise(human_rt = mean(rt, na.rm = TRUE), .by = item_main_id)
+
+df_plot <- df_plot %>%
+  dplyr::select(-dplyr::any_of(c("mean_rt", "mean_rt.x", "mean_rt.y", "human_rt"))) %>%
+  dplyr::left_join(item_rt_human, by = c("item" = "item_main_id"))
+
+stopifnot("human_rt" %in% names(df_plot))
+sum(is.na(df_plot$human_rt))  # now a real check
+
+
+ggplot(df_plot, aes(x = human, y = llm, color = human_rt)) +
+  geom_point(alpha = 0.8, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  scale_color_viridis_c(option = "viridis"#, transform = "log10"
+                        ) +
+  coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(
+    title    = "Item difficulty: human vs LLM",
+    subtitle = paste0("R² = ", round(r2, 3)),
+    x = "% correct (human)", y = "% correct (LLM)", color = "Mean human RT"
+  ) +
+  theme_minimal()
+
+```
+
+
+### Accuracy by concept
+
+```{r}
+#| label: concept-long
+
+concept_order <- df_plot %>%
+  dplyr::group_by(concept) %>%
+  dplyr::summarise(llm_mean = mean(llm, na.rm = TRUE)) %>%
+  dplyr::arrange(dplyr::desc(llm_mean)) %>%
+  dplyr::pull(concept)
+
+df_long <- df_plot %>%
+  tidyr::pivot_longer(
+    cols      = c(human, llm),
+    names_to  = "source",
+    values_to = "pct_correct"
+  ) %>%
+  dplyr::mutate(concept = factor(concept, levels = concept_order))
+
+# items per concept — uneven cells make the bars unequally precise
+df_plot %>% dplyr::count(concept) %>% dplyr::arrange(dplyr::desc(n))
+```
+
+```{r}
+#| label: fig-concept-bars
+#| fig-cap: "Mean % correct per concept (bars) with individual items (points), ordered by LLM performance."
+
+ggplot(df_long, aes(x = concept, y = pct_correct, fill = source)) +
+  stat_summary(
+    fun = mean, geom = "col",
+    position = position_dodge(width = 0.8),
+    width = 0.7, alpha = 0.6
+  ) +
+  geom_point(
+    position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8),
+    size = 1.8, alpha = 0.7, shape = 21, color = "black"
+  ) +
+  scale_fill_brewer(palette = "Set2") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title = "% correct by concept: humans vs LLMs",
+    x = "Concept", y = "% correct", fill = "Source"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Bars are means **across items**, so every item counts equally regardless of how
+many respondents saw it — this is not the same quantity as pooled trial-level
+accuracy. The x-axis is sorted by LLM performance, so any apparent trend in the
+human bars across the axis is partly an artefact of sorting on a correlated
+variable.
+
+## Rasch (1PL) models
+
+### Humans
+
+```{r}
+#| label: model-human
+
+mod_1pl_h <- mirt(wide_human, model = 1, itemtype = "Rasch", SE = TRUE)
+
+
+extract.mirt(mod_1pl_h, "converged")        # TRUE / FALSE
+extract.mirt(mod_1pl_h, "iterations")       # stopped at the 500 ceiling?
+extract.mirt(mod_1pl_h, "secondordertest")  # TRUE = genuine maximum
+
+item_pars_h <- data.frame(coef(mod_1pl_h, IRTpars = TRUE, simplify = TRUE)$items)
+hist(item_pars_h$b, main = "Item difficulty (b) — humans", xlab = "b")
+
+itemfit(mod_1pl_h, na.rm = FALSE, fit_stats = "infit")
+
+theta_h <- fscores(mod_1pl_h, method = "EAP")
+hist(theta_h, main = "Ability (theta) — humans", xlab = "theta")
+```
+
+### LLMs
+
+```{r}
+#| label: model-llm
+
+mod_1pl_l <- mirt(wide_llm, model = 1, itemtype = "Rasch", SE = TRUE)
+
+extract.mirt(mod_1pl_l, "converged")        # TRUE / FALSE
+extract.mirt(mod_1pl_l, "iterations")       # stopped at the 500 ceiling?
+extract.mirt(mod_1pl_l, "secondordertest")  # TRUE = genuine maximum
+
+item_pars_l <- data.frame(coef(mod_1pl_l, IRTpars = TRUE, simplify = TRUE)$items)
+hist(item_pars_l$b, main = "Item difficulty (b) — LLMs", xlab = "b")
+
+itemfit(mod_1pl_l, na.rm = FALSE, fit_stats = "infit")
+
+theta_l <- fscores(mod_1pl_l, method = "EAP")
+hist(theta_l, main = "Ability (theta) — LLMs", xlab = "theta")
+```
+
+
+```{r}
+#| label: n-check
+
+c(n_human = nrow(wide_human), n_llm = nrow(wide_llm))
+```
+
+## Comparing difficulty estimates
+
+```{r}
+#| label: difficulty-join
+
+item_pars_h$item <- rownames(item_pars_h)
+item_pars_l$item <- rownames(item_pars_l)
+
+# distinct name from the accuracy section's `common_items`, which the original
+# script overwrote at this point
+common_items_b <- intersect(item_pars_h$item, item_pars_l$item)
+
+df_diff <- data.frame(
+  item    = common_items_b,
+  b_human = item_pars_h$b[match(common_items_b, item_pars_h$item)],
+  b_llm   = item_pars_l$b[match(common_items_b, item_pars_l$item)]
+) %>%
+  dplyr::left_join(df_items, by = c("item" = "main_id"))
+
+nrow(df_diff)
+```
+
+```{r}
+#| label: difficulty-fit
+
+fit_b <- lm(b_llm ~ b_human, data = df_diff)
+r2_b  <- summary(fit_b)$r.squared
+r2_b
+```
+
+```{r}
+#| label: fig-difficulty
+#| fig-cap: "Rasch difficulty estimates, humans vs LLMs."
+
+ggplot(df_diff, aes(x = b_human, y = b_llm, label = item)) +
+  geom_point(color = "steelblue", alpha = 0.7, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  ggrepel::geom_text_repel(size = 3, max.overlaps = 15) +
+  coord_equal() +
+  labs(
+    title    = "Item difficulty (Rasch b): human vs LLM",
+    subtitle = paste0("R² = ", round(r2_b, 3)),
+    x = "Difficulty (human)",
+    y = "Difficulty (LLM)"
+  ) +
+  theme_minimal()
+```
+
+::: callout-important
+The Rasch scale is identified only up to a location shift, and the two models
+were fit separately. The dashed *y = x* line therefore has no absolute meaning
+here — only the *rank* correspondence between the two sets of difficulties is
+interpretable without linking the scales (e.g. mean-sigma or Stocking-Lord, via
+`plink` or `equateIRT`).
+:::
+
+
+## 2PL models
+
+```{r}
+#| label: 2PL model-human
+
+# mod_2pl_h <- mirt(wide_human, model = 1, itemtype = "2PL")
+
+n_items <- ncol(wide_human)
+
+spec_prior <- mirt.model(paste0(
+  "F = 1-", n_items, "\n",
+  "PRIOR = (1-", n_items, ", a1, lnorm, 0.2, 0.5)"
+))
+
+mod_2pl_h <- mirt(wide_human, model = spec_prior, itemtype = "2PL", SE = TRUE,
+                  technical = list(NCYCLES = 5000))
+
+extract.mirt(mod_2pl_h, "converged")
+extract.mirt(mod_2pl_h, "secondordertest")
+
+item_pars_h <- data.frame(coef(mod_2pl_h, IRTpars = TRUE, simplify = TRUE)$items)
+hist(item_pars_h$b, main = "Item difficulty (b) — humans", xlab = "b")
+hist(item_pars_h$a, main = "Item discrimination (a) — humans", xlab = "a")
+
+itemfit(mod_2pl_h, na.rm = FALSE, fit_stats = "infit")
+
+theta_h <- fscores(mod_2pl_h, method = "EAP")
+# hist(theta_h, main = "Ability (theta) — humans", xlab = "theta")
+
+```
+
+```{r}
+item_pars_h$item <- rownames(item_pars_h)
+
+df_ab <- item_pars_h %>%
+  dplyr::left_join(df_items, by = c("item" = "main_id"))
+
+ggplot(df_ab, aes(x = b, y = a, label = item)) +
+  geom_hline(yintercept = 1, linetype = "dotted", color = "gray60") +
+  geom_point(color = "steelblue", alpha = 0.7, size = 2) +
+  ggrepel::geom_text_repel(size = 3, max.overlaps = 15) +
+  labs(
+    title = "Item parameters (2PL) — humans",
+    x = "Difficulty (b)",
+    y = "Discrimination (a)"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# starting values, to find which slope parameters are actually free
+sv <- mirt(wide_human, model = 2, itemtype = "2PL", pars = "values")
+
+a1_nums <- sv$parnum[sv$name == "a1" & sv$est]
+a2_nums <- sv$parnum[sv$name == "a2" & sv$est]
+
+priors <- c(
+  lapply(a1_nums, function(p) c(p, "lnorm", 0.2, 0.5)),
+  lapply(a2_nums, function(p) c(p, "norm",  0,   1))
+)
+
+mod_2d_h <- mirt(
+  wide_human, model = 2, itemtype = "2PL",
+  method   = "MHRM",
+  parprior = priors,
+  SE       = TRUE,
+  technical = list(NCYCLES = 5000)
+)
+
+extract.mirt(mod_2d_h, "converged")
+```
+
+```{r}
+theta_2d <- fscores(mod_2d_h, method = "EAP", rotate = "oblimin")
+head(theta_2d)
+theta_2d <- fscores(mod_2d_h, method = "EAP", rotate = "oblimin")
+head(theta_2d)
+
+df_theta <- data.frame(theta_2d)
+colnames(df_theta) <- c("F1", "F2")
+
+ggplot(df_theta, aes(x = F1, y = F2)) +
+  geom_hline(yintercept = 0, color = "gray70") +
+  geom_vline(xintercept = 0, color = "gray70") +
+  geom_point(alpha = 0.4, size = 1.5, color = "steelblue") +
+  coord_equal() +
+  labs(x = expression(theta[1]), y = expression(theta[2]),
+       title = "Person ability estimates (EAP, oblimin)") +
+  theme_minimal()
+
+```
+
+```{r}
+ld <- summary(mod_2d_h, rotate = "oblimin", verbose = FALSE)$rotF
+df_ld <- data.frame(item = rownames(ld), F1 = ld[, 1], F2 = ld[, 2]) %>%
+  dplyr::left_join(df_items, by = c("item" = "main_id"))
+
+ggplot(df_ld, aes(x = F1, y = F2, color = size)) +
+  geom_hline(yintercept = 0, color = "gray70") +
+  geom_vline(xintercept = 0, color = "gray70") +
+  geom_point(size = 2.2, alpha = 0.8) +
+  labs(x = "Loading F1", y = "Loading F2", color = "Concept") +
+  theme_minimal()
+
+ggplot(df_ld, aes(x = F1, y = F2, color = concept, label = item)) +
+  geom_hline(yintercept = 0, color = "gray70") +
+  geom_vline(xintercept = 0, color = "gray70") +
+  geom_point(size = 2.2, alpha = 0.8) +
+  ggrepel::geom_text_repel(size = 2.5, max.overlaps = 30,
+                           show.legend = FALSE, segment.alpha = 0.4) +
+  labs(x = "Loading F1", y = "Loading F2", color = "Concept") +
+  theme_minimal()
+```
+
+## Session info
+
+```{r}
+#| label: session-info
+
+sessionInfo()
+```
