@@ -21,6 +21,7 @@ notes.org
 open_router
 
 llm_eval/keys.env
+.claude/
 
 
 AmbigousARC_acl_2025
