@@ -38,6 +38,9 @@ from matplotlib.patches import FancyBboxPatch
 from utils.plot_utils import plot_matrix, ARC_cmap
 from utils.prompt_utils import convert_to_array
 
+from matplotlib.patches import FancyBboxPatch, Rectangle   # extend the existing import
+from PIL import Image
+
 # Columns that identify the respondent, in order of preference.
 SUBJECT_COLS = ['participant', 'model', 'participant_fk']
 
@@ -617,3 +620,182 @@ class ResponseBrowser:
         ]
         cols = [c for c in cols if c and c in self.matches.columns]
         return self.matches[cols].copy()
+
+# -----------------------------------------------------------------------------
+# Process replay
+# -----------------------------------------------------------------------------
+
+def _submit_label(state: str, item: Dict) -> str:
+    """Name the offered matrix an exact-match submission corresponds to, if any."""
+    if _is_blank(state):
+        return 'Blank grid'
+    for name, label in [('D_Matrix', 'matrix'), ('D_Matrix_Row', 'matrix (row)'),
+                        ('D_Concept', 'concept'), ('C', 'duplicate')]:
+        target = item.get(name)
+        if target is not None and state == str(target):
+            return f'= {label}'
+    return 'no exact match'
+
+
+def process_gif(
+    df_proc: pd.DataFrame,
+    items: Any,
+    participant: Any,
+    item_id: str,
+    out_path: str = None,
+    page_id: str = None,
+    real_timing: bool = True,
+    frame_ms: int = 500,
+    min_ms: int = 150,
+    max_ms: int = 2000,
+    end_hold_ms: int = 3000,
+    hl_color: str = 'white',
+    dpi: int = 100,
+) -> str:
+    """
+    Animate one participant's construction of a generation response.
+
+    Uses the same layout and colours as `plot_response` for generation:
+    A -> B, C -> Response (animated), then D Matrix / D Concept / D Random.
+
+    Parameters
+    ----------
+    df_proc : pandas.DataFrame
+        Process frame, one row per select/draw/submit event. Read with
+        dtype={'state': str, 'itemid': str} so leading zeros survive.
+    items : str | list[dict] | AmbigousARCDataset
+        Item source, see `items_to_dict`.
+    participant :
+        Value of `participant_fk`.
+    item_id : str
+        Versioned item id, e.g. 'Fnkg2A_1'.
+    """
+    items = items if isinstance(items, dict) else items_to_dict(items)
+    item_id = str(item_id)
+
+    # -- events -----------------------------------------------------------------
+    d = df_proc[(df_proc['participant_fk'] == participant) &
+                (df_proc['itemid'].astype(str) == item_id)]
+    if page_id is not None:
+        d = d[d['page_id'] == page_id]
+    if d.empty:
+        #print("No items found trying _1 suffix")
+        item_id += "_1"
+        d = df_proc[(df_proc['participant_fk'] == participant) &
+                    (df_proc['itemid'].astype(str) == item_id)]
+        if d.empty:
+            raise ValueError(
+                f"No events found for participant {participant}, item {item_id}"
+            )
+
+    if d['page_id'].nunique() > 1:
+        raise ValueError(
+            f"Multiple page_ids {list(d['page_id'].unique())}; pass page_id=..."
+        )
+    d = d.sort_values('event_idx')
+
+    states = d['state'].astype(str)
+    if not states.str.fullmatch(r'\d+').all() or states.str.len().nunique() != 1:
+        raise ValueError(
+            "`state` must be fixed-length digit strings; read the file with "
+            "dtype={'state': str}."
+        )
+
+    # -- item -------------------------------------------------------------------
+    if item_id not in items:
+        warnings.warn(
+            f"'{item_id}' not in items; get_item falls back to the base id, "
+            f'which may be a different mirror.'
+        )
+    item = get_item(items, item_id)
+    xdim = int(item['xdim'])
+    ydim = int(item.get('ydim', xdim))
+    if states.str.len().iloc[0] != xdim * ydim:
+        raise ValueError(
+            f'State length {states.str.len().iloc[0]} does not fit '
+            f'{xdim} x {ydim} for {item_id}.'
+        )
+
+    # -- static layout, as in _plot_matrix_task ----------------------------------
+    fig = plt.figure(figsize=(6, 5.7), dpi=dpi)
+    gs = fig.add_gridspec(
+        3, 3, width_ratios=[1, 0.35, 1], height_ratios=[1, 1, 1.15], hspace=0.55
+    )
+    _draw_grid(fig.add_subplot(gs[0, 0]), item.get('A'), 'A', xdim, ydim)
+    _draw_arrow(fig.add_subplot(gs[0, 1]))
+    _draw_grid(fig.add_subplot(gs[0, 2]), item.get('B'), 'B', xdim, ydim)
+
+    _draw_grid(fig.add_subplot(gs[1, 0]), item.get('C'), 'C', xdim, ydim)
+    _draw_arrow(fig.add_subplot(gs[1, 1]))
+    ax_r = fig.add_subplot(gs[1, 2])
+    _draw_grid(ax_r, states.iloc[0], 'Response', xdim, ydim)
+
+    options_gs = gs[2, :].subgridspec(1, 3, wspace=0.45)
+    for idx, name in enumerate(OPTION_MATRICES):
+        _draw_grid(fig.add_subplot(options_gs[0, idx]),
+                   matrix_target(item, name), name.replace('_', ' '), xdim, ydim)
+
+    fig.suptitle(
+        f'{participant}  |  {item_id}  |  Generation  |  '
+        f'{_format_concept(item.get("concept"))}',
+        fontsize=13, fontweight='bold',
+    )
+
+    # -- dynamic elements -------------------------------------------------------
+    im = ax_r.images[0]
+    hl = Rectangle((0, 0), 1, 1, fill=False, edgecolor=hl_color,
+                   linewidth=3, visible=False)
+    ax_r.add_patch(hl)
+
+    pos = ax_r.get_position()
+    ax_sw = fig.add_axes([pos.x1 + 0.01, pos.y1 - 0.04, 0.035, 0.035])
+    sw_im = ax_sw.imshow([[0]], **ARC_cmap())
+    ax_sw.set_xticks([])
+    ax_sw.set_yticks([])
+    ax_sw.set_visible(False)
+
+    # -- frames -----------------------------------------------------------------
+    frames, durations = [], []
+    selected = None
+    t = d['t_ms'].to_numpy()
+
+    for i, row in enumerate(d.itertuples()):
+        if row.action == 'select' and pd.notna(row.color):
+            selected = int(row.color)
+        im.set_data(convert_to_array(row.state, xdim))
+
+        if row.action == 'draw' and pd.notna(row.cell):
+            r, c = divmod(int(row.cell) - 1, xdim)   # cells are 1-indexed
+            hl.set_xy((c - 0.5, r - 0.5))
+            hl.set_visible(True)
+        else:
+            hl.set_visible(False)
+
+        if selected is not None:
+            sw_im.set_data([[selected]])
+            ax_sw.set_visible(True)
+
+        label = row.action
+        if row.action == 'submit':
+            label += f' ({_submit_label(row.state, item)})'
+        ax_r.set_title(f'Response: {label}\n{row.t_ms / 1000:.1f} s', size=10)
+
+        fig.canvas.draw()
+        frames.append(
+            Image.fromarray(np.asarray(fig.canvas.buffer_rgba())).convert('RGB')
+        )
+
+        if i == len(d) - 1:
+            durations.append(end_hold_ms)
+        elif real_timing:
+            durations.append(int(np.clip(t[i + 1] - t[i], min_ms, max_ms)))
+        else:
+            durations.append(frame_ms)
+
+    plt.close(fig)
+
+    if out_path is None:
+        out_path = f'process_{participant}_{item_id}.gif'
+    frames[0].save(out_path, save_all=True, append_images=frames[1:],
+                   duration=durations, loop=0)
+    return out_path

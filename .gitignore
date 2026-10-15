@@ -16,8 +16,11 @@ data/items_old_.json
 data/sae
 data/human_data_collection
 data/preprocessed
+data/imports
 notes.org
 open_router
+
+llm_eval/keys.env
 
 
 AmbigousARC_acl_2025
