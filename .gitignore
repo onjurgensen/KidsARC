@@ -8,10 +8,6 @@ __pycache__
 # all ds store files
 .DS_Store
 
-scripts/data_prep_json.py
-scripts/get_sae_percentiles.py
-scripts/items_to_human_df.py
-notes.org
 open_router
 .claude/
 
