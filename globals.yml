@@ -1,4 +1,8 @@
-API_KEY_FILE: 
+# Paths are relative to the repo root.
 ITEMS_FILE: '../data/items/kidsarc.json'
+ITEMS_EXP_FILE: '../data/items/kidsarc_exp.json'   # per-variant solutions (D_Matrix etc.)
+IMPORTS_DIR: '../data/_imports'
+KEYS_FILE: '../data/_keys/keys.env'
 LLM_RESULTS_DIR: '../data/results/results_llm'
 HUMAN_RESULTS_DIR: '../data/results/results_human'
+OUTPUT_DIR: '../output'                            # figures, gifs

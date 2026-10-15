@@ -14,23 +14,30 @@ Categories (in order of precedence):
     duplicate    == A, B or C (collaborator's definition)
     other        valid grid, none of the above
 
+Raw and scored runs live under LLM_RESULTS_DIR (globals.yml).
+
 Usage:
-    python score.py results/raw/pilot.jsonl      # writes results/scored/pilot.csv
+    python score.py <LLM_RESULTS_DIR>/raw/pilot.jsonl   # writes <LLM_RESULTS_DIR>/scored/pilot.csv
+    python score.py <raw.jsonl> --out other.csv          # write somewhere else
 or from a notebook:
     from score import score_run
-    scored = score_run("results/raw/pilot.jsonl")
+    scored = score_run(Path(LLM_RESULTS_DIR) / "raw" / "pilot.jsonl")
 
 When reading the CSV back, use dtype=str for grid columns (leading zeros!).
 """
 import re
 import sys
 import json
+import argparse
 from pathlib import Path
 
 import pandas as pd
 
 HERE = Path(__file__).parent
 REPO = HERE.parent
+sys.path.insert(0, str(REPO))
+
+from utils.globals import ITEMS_FILE, LLM_RESULTS_DIR
 
 CATEGORIES = ["concept", "matrix", "duplicate", "other",
               "unparseable", "truncated", "no_response", "error"]
@@ -82,7 +89,7 @@ def load_raw(path):
 
 def score_run(raw_path,
               prompts_path=HERE / "prompts.json",
-              items_path=REPO / "data" / "items" / "items_updated.json"):
+              items_path=ITEMS_FILE):
     raw = load_raw(raw_path)
     prompts = json.load(open(prompts_path))
     answers = dict(zip(prompts["item_ids"], prompts["answers"]))   # item_id -> [D_Matrix, D_Concept]
@@ -121,9 +128,14 @@ def score_run(raw_path,
 
 
 if __name__ == "__main__":
-    raw_path = Path(sys.argv[1])
-    scored = score_run(raw_path)
-    out_path = HERE / "results" / "scored" / f"{raw_path.stem}.csv"
+    ap = argparse.ArgumentParser()
+    ap.add_argument("raw_path", type=Path)
+    ap.add_argument("--out", type=Path, default=None,
+                    help="default: <LLM_RESULTS_DIR>/scored/<run>.csv")
+    args = ap.parse_args()
+
+    scored = score_run(args.raw_path)
+    out_path = args.out or Path(LLM_RESULTS_DIR) / "scored" / f"{args.raw_path.stem}.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     scored.to_csv(out_path, index=False)
     print(scored.groupby("model", observed=True)["category"]

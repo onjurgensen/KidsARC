@@ -1,4 +1,6 @@
-data/results
+# Data lives outside the repo (see globals.yml); never commit keys
+*.env
+
 # all pycache directories
 __pycache__
 # all pycache files
@@ -6,22 +8,10 @@ __pycache__
 # all ds store files
 .DS_Store
 
-data/matrices_sql.json
-data/items_old.json
 scripts/data_prep_json.py
 scripts/get_sae_percentiles.py
 scripts/items_to_human_df.py
-data/items.json
-data/items_old_.json
-data/sae
-data/human_data_collection
-data/preprocessed
-data/imports
 notes.org
 open_router
-
-llm_eval/keys.env
 .claude/
 
-
-AmbigousARC_acl_2025

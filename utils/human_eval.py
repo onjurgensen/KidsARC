@@ -33,10 +33,11 @@ import numpy as np
 import pandas as pd
 from rich import print as rprint
 
+from utils.globals import ITEMS_FILE
+
 # Paths are resolved relative to this file, not the working directory.
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-HUMAN_DIR = os.path.join(_BASE_DIR, '..', 'data', 'human_data_collection')
-HUMAN_ITEMS_FILE = os.path.join(HUMAN_DIR, 'AmbigousARC.json')
+# Item file of the original (AmbigousARC) human study, kept next to the current items.
+HUMAN_ITEMS_FILE = os.path.join(os.path.dirname(ITEMS_FILE), 'old', 'AmbigousARC.json')
 
 TASKS = ['generation', 'discrimination', 'recognition']
 

@@ -4,7 +4,7 @@ Quick plots for scored LLM runs.
     from score import score_run
     from pilot_plots import plot_performance, plot_item_across_models, plot_responses
 
-    scored = score_run("results/raw/pilot.jsonl")
+    scored = score_run(Path(LLM_RESULTS_DIR) / "raw" / "pilot.jsonl")
     plot_performance(scored)
     plot_item_across_models(scored, "02ue5B_1")
     plot_responses(scored, model="openai/gpt-4o", category="other", n=3)
@@ -21,6 +21,7 @@ REPO = HERE.parent
 sys.path.insert(0, str(REPO))
 from utils.plot_utils import plot_matrix, plot_item          # collaborator's styling
 from utils.prompt_utils import convert_to_array
+from utils.globals import ITEMS_FILE
 
 from score import CATEGORIES
 
@@ -69,7 +70,7 @@ def plot_performance(scored, sort_by="concept", ax=None):
 
 def plot_item_across_models(scored, item_id,
                             prompts_path=HERE / "prompts.json",
-                            items_path=REPO / "data" / "items" / "items_updated.json",
+                            items_path=ITEMS_FILE,
                             ncols=5):
     """Top row: A, B, C, D Concept, D Matrix. Below: each model's response."""
     items, answers = _load_items_and_answers(prompts_path, items_path)
@@ -111,7 +112,7 @@ def plot_item_across_models(scored, item_id,
 
 def plot_responses(scored, model=None, category=None, item_ids=None, n=5,
                    prompts_path=HERE / "prompts.json",
-                   items_path=REPO / "data" / "items" / "items_updated.json"):
+                   items_path=ITEMS_FILE):
     """Collaborator-style item plots (A->B, C->Response, D Concept, D Matrix), filtered."""
     items, answers = _load_items_and_answers(prompts_path, items_path)
     sub = scored

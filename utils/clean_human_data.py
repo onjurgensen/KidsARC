@@ -8,18 +8,18 @@ Clean Kids ARC human data for one task.
         users, responses, process, task='generation', min_rt_ms=1000
     )
 
-Or from the repo root, using the paths hardcoded below:
+Or from the repo root, using the default paths from globals.yml:
 
     python -m utils.clean_human_data
 
 or overriding them:
 
-    python -m utils.clean_human_data users.csv responses.csv process.csv --out data/clean
+    python -m utils.clean_human_data users.csv responses.csv process.csv --out some/dir
 
 Trials are excluded in this order, and each step is logged:
     1. other tasks
     2. participants not in the registered-users file (`participant_id_arc`)
-    3. items whose base id (`main_id`) is not in items_updated.json
+    3. items whose base id (`main_id`) is not in ITEMS_FILE
     4. item variants with no known solution
     5. blank responses (missing, or an all-zero grid)
     6. rt missing or below `min_rt_ms`
@@ -40,21 +40,15 @@ from typing import *
 import pandas as pd
 
 from utils.human_eval import is_blank_grid, is_missing
+from utils.globals import ITEMS_FILE, ITEMS_EXP_FILE, IMPORTS_DIR, HUMAN_RESULTS_DIR
 
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_REPO_DIR = os.path.abspath(os.path.join(_BASE_DIR, '..'))
+# Default paths, all from globals.yml. ITEMS_FILE defines the valid item set.
+USERS_FILE = os.path.join(HUMAN_RESULTS_DIR, 'user_data_merged.csv')
+RESPONSES_FILE = os.path.join(IMPORTS_DIR, 'kidsarc.csv')
+PROCESS_FILE = os.path.join(IMPORTS_DIR, 'kidsarc_process.csv')
+OUT_DIR = HUMAN_RESULTS_DIR
 
-USERS_FILE = 'data/human_data_collection/user_data_merged.csv'
-RESPONSES_FILE = 'data/imports/kidsarc.csv'
-PROCESS_FILE = 'data/imports/kidsarc_process.csv'
-OUT_DIR = 'data/human_data_collection'
-
-ITEMS_DIR = os.path.join(_BASE_DIR, '..', 'data', 'items')
-ITEMS_FILE = os.path.join(ITEMS_DIR, 'items_updated.json')  # defines the valid item set
-SOLUTION_FILES = [
-    os.path.join(ITEMS_DIR, 'items_updated_exp.json'),
-    os.path.join(ITEMS_DIR, 'items_original_exp.json'),
-]
+SOLUTION_FILES = [ITEMS_EXP_FILE]
 SOLUTION_COLS = ['item_id', 'main_id', 'A', 'B', 'C', 'D_Concept', 'D_Matrix', 'concept']
 DUPLICATE_TERMS = ['B', 'C']
 
@@ -116,7 +110,7 @@ def clean_responses(
     filters = [
         (f'task != {task!r}',          lambda d: d['task'] != task),
         ('unregistered participant',   lambda d: ~d['participant_fk'].isin(registered)),
-        ('item not in items_updated',  lambda d: ~d['main_id'].isin(valid_ids)),
+        ('item not in item set',       lambda d: ~d['main_id'].isin(valid_ids)),
         ('no solution for variant',    lambda d: ~d['itemid'].isin(known_variants)),
         ('blank response',             lambda d: d['response'].apply(
                                            lambda r: is_missing(r) or is_blank_grid(r))),
@@ -270,15 +264,14 @@ def clean_human_data(
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    repo = lambda path: os.path.join(_REPO_DIR, path)
-    ap.add_argument('users', nargs='?', default=repo(USERS_FILE))
-    ap.add_argument('responses', nargs='?', default=repo(RESPONSES_FILE))
-    ap.add_argument('process', nargs='?', default=repo(PROCESS_FILE))
+    ap.add_argument('users', nargs='?', default=USERS_FILE)
+    ap.add_argument('responses', nargs='?', default=RESPONSES_FILE)
+    ap.add_argument('process', nargs='?', default=PROCESS_FILE)
     ap.add_argument('--task', default='generation')
     ap.add_argument('--min-rt', type=float, default=1000, help='ms')
     ap.add_argument('--items', default=ITEMS_FILE)
     ap.add_argument('--solution-files', nargs='+', default=SOLUTION_FILES)
-    ap.add_argument('--out', default=repo(OUT_DIR))
+    ap.add_argument('--out', default=OUT_DIR)
     args = ap.parse_args()
 
     resp, proc, summary = clean_human_data(

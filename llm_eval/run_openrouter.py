@@ -2,7 +2,7 @@
 Query LLMs on Kids ARC generation items via OpenRouter.
 
 Collection only: reads prompts.json + models.yaml, appends one JSON line per call
-to results/raw/<run_name>.jsonl. Scoring happens separately (score.py).
+to <LLM_RESULTS_DIR>/raw/<run_name>.jsonl (see globals.yml). Scoring happens separately (score.py).
 
 Resuming: rerunning with the same --run_name skips (model, item_id) pairs that
 already have a successful row. Failed calls are retried on rerun and appended
@@ -13,6 +13,7 @@ Examples:
     python run_openrouter.py --run_name pilot --max_items 10 --models deepseek/deepseek-r1
 """
 import os
+import sys
 import json
 import time
 import random
@@ -27,6 +28,10 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 HERE = Path(__file__).parent
+REPO = HERE.parent
+sys.path.insert(0, str(REPO))
+from utils.globals import KEYS_FILE, LLM_RESULTS_DIR
+
 MAX_RETRIES = 4
 
 
@@ -125,7 +130,7 @@ def main():
     p.add_argument("--max_items", type=int, default=None)
     args = p.parse_args()
 
-    load_dotenv(HERE / "keys.env")
+    load_dotenv(KEYS_FILE)
     client = OpenAI(base_url="https://openrouter.ai/api/v1",
                     api_key=os.environ["OPENROUTER_API_KEY"],
                     max_retries=0)  # retries handled in query()
@@ -142,7 +147,7 @@ def main():
             raise ValueError(f"not in config: {unknown}")
         models = [m for m in models if m["id"] in args.models]
 
-    out_path = HERE / "results" / "raw" / f"{args.run_name}.jsonl"
+    out_path = Path(LLM_RESULTS_DIR) / "raw" / f"{args.run_name}.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     done = load_done(out_path)
     lock = threading.Lock()
