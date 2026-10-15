@@ -49,7 +49,7 @@ PROCESS_FILE = os.path.join(IMPORTS_DIR, 'kidsarc_process.csv')
 OUT_DIR = HUMAN_RESULTS_DIR
 
 SOLUTION_FILES = [ITEMS_EXP_FILE]
-SOLUTION_COLS = ['item_id', 'main_id', 'A', 'B', 'C', 'D_Concept', 'D_Matrix', 'concept']
+SOLUTION_COLS = ['item_id', 'main_id', 'A', 'B', 'C', 'D_Concept', 'D_Literal', 'concept']
 DUPLICATE_TERMS = ['B', 'C']
 
 TRIAL_KEY = ['participant_fk', 'itemid', 'task']
@@ -79,6 +79,8 @@ def load_data(users_path: str, responses_path: str, process_path: str):
         # Humans see one variant per item, so items are identified by base id
         df['main_id'] = df['itemid'].str.rsplit('_', n=1).str[0]
     responses['rt'] = pd.to_numeric(responses['rt'])
+    # The platform export calls the literal-level column `matrix_level`
+    responses = responses.rename(columns={'matrix_level': 'literal_level'})
 
     return users, responses, process
 
@@ -180,7 +182,7 @@ def load_items(
         frames.append(df.reindex(columns=SOLUTION_COLS).assign(_rank=rank))
     all_sol = pd.concat(frames, ignore_index=True)
 
-    grid_cols = ['A', 'B', 'C', 'D_Concept', 'D_Matrix']
+    grid_cols = ['A', 'B', 'C', 'D_Concept', 'D_Literal']
     conflicting = (all_sol.drop_duplicates(['item_id'] + grid_cols)
                    .loc[lambda d: d['item_id'].duplicated(keep=False), 'main_id'])
     modified = sorted(set(conflicting) & valid_ids)
@@ -202,10 +204,10 @@ def score_responses(clean_resp: pd.DataFrame, solutions: pd.DataFrame) -> pd.Dat
     """
     df = clean_resp.merge(solutions.drop(columns='main_id'),
                           left_on='itemid', right_on='item_id', how='left')
-    hits = ['concept_response', 'matrix_response', 'duplicate_response']
+    hits = ['concept_response', 'literal_response', 'duplicate_response']
     copied = df[['A', 'B', 'C']].eq(df['response'], axis=0)
     df['concept_response'] = (df['response'] == df['D_Concept']).astype(int)
-    df['matrix_response'] = (df['response'] == df['D_Matrix']).astype(int)
+    df['literal_response'] = (df['response'] == df['D_Literal']).astype(int)
     df['duplicate_response'] = copied[DUPLICATE_TERMS].any(axis=1).astype(int)
     df['duplicate_of'] = copied.apply(lambda row: ';'.join(row.index[row]), axis=1).replace('', pd.NA)
     df['other_response'] = (df[hits].sum(axis=1) == 0).astype(int)
@@ -220,7 +222,7 @@ def summarise(scored: pd.DataFrame, users: pd.DataFrame) -> pd.DataFrame:
     agg = {
         'n_trials': ('itemid', 'size'),
         'concept_acc': ('concept_response', 'mean'),
-        'matrix_acc': ('matrix_response', 'mean'),
+        'literal_acc': ('literal_response', 'mean'),
         'duplicate_prop': ('duplicate_response', 'mean'),
         'items': ('main_id', list),
     }

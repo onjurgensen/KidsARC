@@ -70,31 +70,31 @@ def generate_seed(value, seed=None):
     hash_int = int(hash_object.hexdigest(), 16)
     return (hash_int + (seed if seed else 0)) % (2**32 - 1) # Numpy seed must be between 0 and 2**32 - 1
 
-def get_d_matrix(item, level='pixel'):
+def get_d_literal(item, level='pixel'):
     assert level in ['pixel', 'row'], f"Invalid level: {level}"
     dim = int(len(item['A'])**0.5)
-    d_matrix = ''
+    d_literal = ''
 
     if level == 'pixel':
         for a, b, c in zip(item['A'], item['B'], item['C']):
             if a == b:
-                d_matrix += c
+                d_literal += c
             else:
-                d_matrix += b
+                d_literal += b
                 
     if level == 'row':
         mats = [convert_to_array(mat, dim) for mat in [item['A'], item['B'], item['C']]]
         for a, b, c in zip(*mats):
             if np.array_equal(a, b):
-                d_matrix += encode_array(c)
+                d_literal += encode_array(c)
             else:
-                d_matrix += encode_array(b)
+                d_literal += encode_array(b)
     
-    return d_matrix
+    return d_literal
 
 def create_mirror_data(data: list, n_mirror: int, seed: int=None, max_iter=10):
     # All possible matrices
-    matrices = ['A', 'B', 'C', 'D_Concept', 'D_Matrix', 'D_Random']
+    matrices = ['A', 'B', 'C', 'D_Concept', 'D_Literal', 'D_Random']
 
     def create_mirror_color_map(item: dict, seed=None) -> dict:
         if seed is not None:
@@ -252,7 +252,7 @@ def has_exact_consecutive_elements(lst, target_count):
 
 def canonicize_item(item):
     item = item.copy()
-    matrices = ['A', 'B', 'C', 'D_Concept', 'D_Matrix', 'D_Random']
+    matrices = ['A', 'B', 'C', 'D_Concept', 'D_Literal', 'D_Random']
     # Get unique colors in the item
     mats = ''
     for k, v in item.items(): 
@@ -278,7 +278,7 @@ class AmbigousARCDataset:
         encoding: str = 'int',
         find_best_seed: bool = False,
         n_iter_seed: int = 100,
-        d_matrix_level: str = 'pixel',
+        d_literal_level: str = 'pixel',
         filter_items_list: List[str] = None,
         canonicize: bool = False,
         seed: int = None,
@@ -292,7 +292,7 @@ class AmbigousARCDataset:
         assert example_item in ['same', 'different', 'no_example'], f'Invalid example item type "{example_item}"'
         assert encoding in ['int', 'color'], f"Invalid encoding type '{encoding}'"
         assert duplicate in [None, 'random', 'a', 'b', 'c'], f"Invalid duplicate type '{duplicate}'"
-        assert d_matrix_level in ['pixel', 'row'], f"Invalid D matrix level '{d_matrix_level}'"
+        assert d_literal_level in ['pixel', 'row'], f"Invalid D literal level '{d_literal_level}'"
         assert mirror_type in ['color', 'example', 'answer_opt'], f"Invalid mirror type '{mirror_type}'"
         assert matrix_rotation in [0, 90, 180, 270], f"Invalid matrix rotation '{matrix_rotation}'"
 
@@ -308,7 +308,7 @@ class AmbigousARCDataset:
 
         # Set the configuration
         self.encoding = encoding
-        self.d_matrix_level = d_matrix_level
+        self.d_literal_level = d_literal_level
         self.batch_size = batch_size
         self.random_mat = random_mat
         self.duplicate = duplicate
@@ -332,7 +332,7 @@ class AmbigousARCDataset:
 
         # Generate the D matrix for the items
         for item in items_data:
-            item['D_Matrix'] = get_d_matrix(item, d_matrix_level)
+            item['D_Literal'] = get_d_literal(item, d_literal_level)
 
         # Generate random matrices for the items
         if random_mat and task == 'discrimination':
@@ -342,7 +342,7 @@ class AmbigousARCDataset:
         # Rotate the matrices
         if matrix_rotation != 0:
             for idx, item in enumerate(items_data):
-                matrices = ['A', 'B', 'C', 'D_Concept', 'D_Matrix']
+                matrices = ['A', 'B', 'C', 'D_Concept', 'D_Literal']
                 matrices += ['D_Random'] if random_mat and task == 'discrimination' else []
                 for mat in matrices:
                     rotated_matrix = convert_to_array(item[mat], int(len(item['A'])**0.5))
@@ -475,7 +475,7 @@ class AmbigousARCDataset:
             self.example_concepts_options = [self.example_concepts_options[i] for i in range(len(self.example_concepts_options)) if item_mask[i]] if self.task == 'recognition' else None
 
     def generation(self, item: dict, example: bool=False) -> Tuple[str, List[str]]:
-        mats = ['A', 'B', 'C', 'D_Concept'] if example else ['A', 'B', 'C', 'D_Matrix', 'D_Concept']
+        mats = ['A', 'B', 'C', 'D_Concept'] if example else ['A', 'B', 'C', 'D_Literal', 'D_Concept']
         arrays = item_to_arrays(item, matrices=mats)
         arrays_str = [array_to_str(arr, self.encoding) for arr in arrays]
         prompt = self.mats_to_prompt(arrays_str[:3]) + '\n\nAnswer: ' 
@@ -485,7 +485,7 @@ class AmbigousARCDataset:
     
     def discrimination(self, item: dict, example: bool=False) -> Tuple[str, List[str]]:
         # Get the arrays for the item
-        matrices = ['A', 'B', 'C', 'D_Matrix', 'D_Concept']
+        matrices = ['A', 'B', 'C', 'D_Literal', 'D_Concept']
         matrices += ['D_Random'] if self.random_mat else []
         arrays = item_to_arrays(item, matrices=matrices)  
         
@@ -509,7 +509,7 @@ class AmbigousARCDataset:
         prompt += '\n\nAnswer: ('
 
         # Determine the correct answers based on the shuffled index
-        matrix = self.answer_options[np.where(idx == 0)[0][0]]  # Matrix
+        matrix = self.answer_options[np.where(idx == 0)[0][0]]  # Literal
         concept = self.answer_options[np.where(idx == 1)[0][0]]  # Concept matrix (correct)
         random = self.answer_options[np.where(idx == 2)[0][0]] if self.random_mat else None  # Random matrix if applicable
         duplicate = self.answer_options[np.where(idx == 3)[0][0]] if self.duplicate else None  # Duplicate matrix if applicable
@@ -579,7 +579,7 @@ class AmbigousARCDataset:
 
         # Get the source matrices
         input_mats = item_to_arrays(item, matrices=['A', 'B', 'C'])
-        output_mats = item_to_arrays(item, matrices=['D_Concept', 'D_Matrix'])
+        output_mats = item_to_arrays(item, matrices=['D_Concept', 'D_Literal'])
         dim = input_mats[0].shape[0]
 
         # The random matrix is created by randomly selecting columns and rows from the source matrices
@@ -617,9 +617,9 @@ class AmbigousARCDataset:
         # Define the matrices to plot based on the task
         mats = ['A', 'B', 'C', 'D_Concept']
         if self.task == 'generation':
-            mats += ['D_Matrix']
+            mats += ['D_Literal']
         if self.task == 'discrimination':
-            mats += ['D_Matrix', 'D_Random']
+            mats += ['D_Literal', 'D_Random']
 
         for item in items:
             arrs = item_to_arrays(item, matrices=mats)
@@ -637,7 +637,7 @@ class AmbigousARCDataset:
             'task': self.task,
             'example_item': self.example_item,
             'encoding': self.encoding,
-            'd_matrix_level': self.d_matrix_level,
+            'd_literal_level': self.d_literal_level,
             'random_mat': self.random_mat,
             'duplicate': self.duplicate,
             'concept_answer_n': self.concept_answer_n,
@@ -662,7 +662,7 @@ class AmbigousARCDataset_old:
         encoding: str = 'int',
         find_best_seed: bool = False,
         n_iter_seed: int = 100,
-        d_matrix_level: str = 'pixel',
+        d_literal_level: str = 'pixel',
         filter_items_list: List[str] = None,
         canonicize: bool = False,
         seed: int = None,
@@ -676,7 +676,7 @@ class AmbigousARCDataset_old:
         assert example_item in ['same', 'different', 'no_example'], f'Invalid example item type "{example_item}"'
         assert encoding in ['int', 'color'], f"Invalid encoding type '{encoding}'"
         assert duplicate in [None, 'random', 'a', 'b', 'c'], f"Invalid duplicate type '{duplicate}'"
-        assert d_matrix_level in ['pixel', 'row'], f"Invalid D matrix level '{d_matrix_level}'"
+        assert d_literal_level in ['pixel', 'row'], f"Invalid D literal level '{d_literal_level}'"
         assert mirror_type in ['color', 'example'], f"Invalid mirror type '{mirror_type}'"
         assert matrix_rotation in [0, 90, 180, 270], f"Invalid matrix rotation '{matrix_rotation}'"
 
@@ -692,7 +692,7 @@ class AmbigousARCDataset_old:
 
         # Set the configuration
         self.encoding = encoding
-        self.d_matrix_level = d_matrix_level
+        self.d_literal_level = d_literal_level
         self.batch_size = batch_size
         self.random_mat = random_mat
         self.duplicate = duplicate
@@ -716,7 +716,7 @@ class AmbigousARCDataset_old:
 
         # Generate the D matrix for the items
         for item in items_data:
-            item['D_Matrix'] = get_d_matrix(item, d_matrix_level)
+            item['D_Literal'] = get_d_literal(item, d_literal_level)
 
         # Generate random matrices for the items
         if random_mat and task == 'discrimination':
@@ -726,7 +726,7 @@ class AmbigousARCDataset_old:
         # Rotate the matrices
         if matrix_rotation != 0:
             for idx, item in enumerate(items_data):
-                matrices = ['A', 'B', 'C', 'D_Concept', 'D_Matrix']
+                matrices = ['A', 'B', 'C', 'D_Concept', 'D_Literal']
                 matrices += ['D_Random'] if random_mat and task == 'discrimination' else []
                 for mat in matrices:
                     rotated_matrix = convert_to_array(item[mat], int(len(item['A'])**0.5))
@@ -850,7 +850,7 @@ class AmbigousARCDataset_old:
             self.example_y = [self.example_y[i] for i in range(len(self.example_y)) if item_mask[i]]
 
     def generation(self, item: dict, example: bool=False) -> Tuple[str, List[str]]:
-        mats = ['A', 'B', 'C', 'D_Concept'] if example else ['A', 'B', 'C', 'D_Matrix', 'D_Concept']
+        mats = ['A', 'B', 'C', 'D_Concept'] if example else ['A', 'B', 'C', 'D_Literal', 'D_Concept']
         arrays = item_to_arrays(item, matrices=mats)
         arrays_str = [array_to_str(arr, self.encoding) for arr in arrays]
         prompt = self.mats_to_prompt(arrays_str[:3]) + '\n\nAnswer: ' 
@@ -860,7 +860,7 @@ class AmbigousARCDataset_old:
     
     def discrimination(self, item: dict, example: bool=False) -> Tuple[str, List[str]]:
         # Get the arrays for the item
-        matrices = ['A', 'B', 'C', 'D_Matrix', 'D_Concept']
+        matrices = ['A', 'B', 'C', 'D_Literal', 'D_Concept']
         matrices += ['D_Random'] if self.random_mat else []
         arrays = item_to_arrays(item, matrices=matrices)  
         
@@ -884,7 +884,7 @@ class AmbigousARCDataset_old:
         prompt += '\n\nAnswer: ('
 
         # Determine the correct answers based on the shuffled index
-        matrix = self.answer_options[np.where(idx == 0)[0][0]]  # Matrix
+        matrix = self.answer_options[np.where(idx == 0)[0][0]]  # Literal
         concept = self.answer_options[np.where(idx == 1)[0][0]]  # Concept matrix (correct)
         random = self.answer_options[np.where(idx == 2)[0][0]] if self.random_mat else None  # Random matrix if applicable
         duplicate = self.answer_options[np.where(idx == 3)[0][0]] if self.duplicate else None  # Duplicate matrix if applicable
@@ -948,7 +948,7 @@ class AmbigousARCDataset_old:
 
         # Get the source matrices
         input_mats = item_to_arrays(item, matrices=['A', 'B', 'C'])
-        output_mats = item_to_arrays(item, matrices=['D_Concept', 'D_Matrix'])
+        output_mats = item_to_arrays(item, matrices=['D_Concept', 'D_Literal'])
         dim = input_mats[0].shape[0]
 
         # The random matrix is created by randomly selecting columns and rows from the source matrices
@@ -986,9 +986,9 @@ class AmbigousARCDataset_old:
         # Define the matrices to plot based on the task
         mats = ['A', 'B', 'C', 'D_Concept']
         if self.task == 'generation':
-            mats += ['D_Matrix']
+            mats += ['D_Literal']
         if self.task == 'discrimination':
-            mats += ['D_Matrix', 'D_Random']
+            mats += ['D_Literal', 'D_Random']
 
         for item in items:
             arrs = item_to_arrays(item, matrices=mats)
@@ -1006,7 +1006,7 @@ class AmbigousARCDataset_old:
             'task': self.task,
             'example_item': self.example_item,
             'encoding': self.encoding,
-            'd_matrix_level': self.d_matrix_level,
+            'd_literal_level': self.d_literal_level,
             'random_mat': self.random_mat,
             'duplicate': self.duplicate,
             'concept_answer_n': self.concept_answer_n,

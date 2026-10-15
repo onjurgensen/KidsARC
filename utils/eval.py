@@ -98,16 +98,16 @@ class ModelEval():
                 self.logprobs = None
             
             # Classify the responses
-            self.matrix_responses = elementwise_match([i[0] for i in self.dataset.y], self.clean_responses)
+            self.literal_responses = elementwise_match([i[0] for i in self.dataset.y], self.clean_responses)
             self.concept_responses = elementwise_match([i[1] for i in self.dataset.y], self.clean_responses)
             self.duplicate_responses = self.get_dup_gen_responses(self.dataset.input_matrices, self.clean_responses)
-            self.other_responses = get_all_zero_indices(self.matrix_responses, self.concept_responses, self.duplicate_responses)
+            self.other_responses = get_all_zero_indices(self.literal_responses, self.concept_responses, self.duplicate_responses)
             
             # Calculate robustness
             if self.dataset.n_mirror > 0 and self.valid_responses_n > 0:
                 self.response_types = []
                 for i in range(self.dataset.size):
-                    if self.matrix_responses[i]: self.response_types.append('matrix')
+                    if self.literal_responses[i]: self.response_types.append('literal')
                     elif self.concept_responses[i]: self.response_types.append('concept')
                     elif self.duplicate_responses[i]: self.response_types.append('duplicate')
                     else: self.response_types.append('other')
@@ -117,7 +117,7 @@ class ModelEval():
                 self.robustness_per_item = None
             
             # Calculate the props
-            self.matrix_prop = np.mean(self.matrix_responses)
+            self.literal_prop = np.mean(self.literal_responses)
             self.concept_prop = np.mean(self.concept_responses)
             self.duplicate_prop = np.mean(self.duplicate_responses)
             self.other_prop = np.mean(self.other_responses)
@@ -158,14 +158,14 @@ class ModelEval():
 
             # Props and responses
             if self.dataset.task == 'discrimination':
-                # Matrix: 0 | Concept: 1 | Random: 2 | Duplicate: 3
-                self.matrix_responses = elementwise_match([0]*len(self.clean_responses), self.choices)
+                # Literal: 0 | Concept: 1 | Random: 2 | Duplicate: 3
+                self.literal_responses = elementwise_match([0]*len(self.clean_responses), self.choices)
                 self.concept_responses = elementwise_match([1]*len(self.clean_responses), self.choices)
                 self.other_responses = elementwise_match([2]*len(self.clean_responses), self.choices)
                 self.duplicate_responses = elementwise_match([3]*len(self.clean_responses), self.choices)
                 
                 # Calculate the props
-                self.matrix_prop = np.mean(self.matrix_responses)
+                self.literal_prop = np.mean(self.literal_responses)
                 self.concept_prop = np.mean(self.concept_responses)
                 self.other_prop = np.mean(self.other_responses)
                 self.duplicate_prop = np.mean(self.duplicate_responses)
@@ -295,8 +295,8 @@ class Eval():
     def __str__(self):
         s = f'Number of models: {len(self.models)}\n'
         if self.question_type == 'discrimination' or self.question_type == 'generation':
-            if self.concept_responses and self.matrix_responses:
-                s += f'Concept: {np.mean(self.concept_responses):.2f}\nMatrix: {np.mean(self.matrix_responses):.2f}'
+            if self.concept_responses and self.literal_responses:
+                s += f'Concept: {np.mean(self.concept_responses):.2f}\nLiteral: {np.mean(self.literal_responses):.2f}'
             else: 
                 s += 'No valid responses'
         elif self.question_type == 'recognition':
@@ -329,13 +329,13 @@ class Eval():
         }
         
         if self.dataset.task == 'discrimination':
-            df_config['choice'] = [{0: 'matrix', 1: 'concept', 2: 'other', 3: 'duplicate'}.get(i) for i in np.concatenate([model.choices for model in self.models])] 
+            df_config['choice'] = [{0: 'literal', 1: 'concept', 2: 'other', 3: 'duplicate'}.get(i) for i in np.concatenate([model.choices for model in self.models])] 
         if self.dataset.task == 'recognition':
             df_config['choice'] = np.concatenate([model.choices for model in self.models])
         df_config['concept_response'] = np.concatenate([model.concept_responses for model in self.models]) 
         df_config['other_response'] = np.concatenate([model.other_responses for model in self.models])
         if self.dataset.task != 'recognition':
-            df_config['matrix_response'] = np.concatenate([model.matrix_responses for model in self.models])
+            df_config['literal_response'] = np.concatenate([model.literal_responses for model in self.models])
             df_config['duplicate_response'] = np.concatenate([model.duplicate_responses for model in self.models])
         
         if self.dataset.task == 'generation':

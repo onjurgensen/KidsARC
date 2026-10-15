@@ -35,7 +35,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from utils.plot_utils import plot_matrix
-from utils.prompt_utils import convert_to_array, get_d_matrix
+from utils.prompt_utils import convert_to_array, get_d_literal
 
 # Grids that identify an item. Two items matching on any of these are the
 # same item as far as review is concerned.
@@ -87,29 +87,29 @@ def validate_item(item: Dict) -> List[str]:
         return problems
 
     # The literal answers. Both are derived, so they can be checked for free.
-    d_pixel = get_d_matrix(item, 'pixel')
-    d_row = get_d_matrix(item, 'row')
+    d_pixel = get_d_literal(item, 'pixel')
+    d_row = get_d_literal(item, 'row')
 
     if d_pixel == grids['D_Concept']:
-        problems.append('D_Concept equals the pixel-level D_Matrix (not ambiguous)')
+        problems.append('D_Concept equals the pixel-level D_Literal (not ambiguous)')
     if d_row == grids['D_Concept']:
-        problems.append('D_Concept equals the row-level D_Matrix (not ambiguous)')
+        problems.append('D_Concept equals the row-level D_Literal (not ambiguous)')
 
     if grids['D_Concept'] in (grids['A'], grids['B'], grids['C']):
         problems.append('D_Concept duplicates one of the input grids')
 
-    # If the authoring tool exported its own D_Matrix, it should agree with
-    # what get_d_matrix produces -- otherwise one of the two is wrong.
-    # A blank or all-zero export is a placeholder, not a claim: D_Matrix is
+    # If the authoring tool exported its own D_Literal, it should agree with
+    # what get_d_literal produces -- otherwise one of the two is wrong.
+    # A blank or all-zero export is a placeholder, not a claim: D_Literal is
     # generated procedurally from A, B and C, so there is nothing to check.
-    exported = str(item.get('D_Matrix', '') or '').strip()
+    exported = str(item.get('D_Literal', '') or '').strip()
     is_placeholder = (
         not exported
         or exported.lower() == 'nan'
         or set(exported) == {'0'}
     )
     if not is_placeholder and exported not in (d_pixel, d_row):
-        problems.append('exported D_Matrix matches neither the pixel nor row rule')
+        problems.append('exported D_Literal matches neither the pixel nor row rule')
 
     return problems
 
@@ -119,7 +119,7 @@ def prepare_new_items(df: pd.DataFrame) -> List[Dict]:
     Turn the imported dataframe into item dicts in the existing format.
 
     `xdim` / `ydim` are derived rather than read, and the exported
-    `D_Matrix` is dropped: it is a pure function of A, B and C, so storing
+    `D_Literal` is dropped: it is a pure function of A, B and C, so storing
     it invites drift. It is still used by `validate_item` as a consistency
     check before being discarded.
     """
@@ -140,8 +140,9 @@ def prepare_new_items(df: pd.DataFrame) -> List[Dict]:
         xdim, ydim = derive_dims(item['A'])
         item['xdim'], item['ydim'] = xdim, ydim
 
-        # Kept off the item, used only for validation.
-        item['_exported_d_matrix'] = str(row.get('D_Matrix', '') or '')
+        # Kept off the item, used only for validation. The authoring tool
+        # still exports the literal answer as `D_Matrix`.
+        item['_exported_d_literal'] = str(row.get('D_Matrix', '') or '')
         item['_problems'] = validate_item(item)
         items.append(item)
 
@@ -407,8 +408,8 @@ class ItemReviewer:
             print('Use reviewer.reject() to drop it, or .next() to skip.')
             return
 
-        d_pixel = get_d_matrix(item, 'pixel')
-        d_row = get_d_matrix(item, 'row')
+        d_pixel = get_d_literal(item, 'pixel')
+        d_row = get_d_literal(item, 'row')
 
         fig = plt.figure(figsize=(9, 8.5))
         gs = fig.add_gridspec(
@@ -424,8 +425,8 @@ class ItemReviewer:
         self._grid(fig.add_subplot(gs[1, 2]), item['D_Concept'], 'D Concept', xdim)
 
         bottom = gs[2, :].subgridspec(1, 3, wspace=0.45)
-        self._grid(fig.add_subplot(bottom[0, 0]), d_pixel, 'D Matrix (pixel)', xdim)
-        self._grid(fig.add_subplot(bottom[0, 1]), d_row, 'D Matrix (row)', xdim)
+        self._grid(fig.add_subplot(bottom[0, 0]), d_pixel, 'D Literal (pixel)', xdim)
+        self._grid(fig.add_subplot(bottom[0, 1]), d_row, 'D Literal (row)', xdim)
 
         ax = fig.add_subplot(bottom[0, 2])
         ax.axis('off')

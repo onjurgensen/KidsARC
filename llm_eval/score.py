@@ -10,7 +10,7 @@ Categories (in order of precedence):
     truncated    hit max_tokens (finish_reason == "length") and no parseable grid
     unparseable  text present, but no dim x dim grid could be extracted
     concept      == D_Concept
-    matrix       == D_Matrix
+    literal      == D_Literal
     duplicate    == A, B or C (collaborator's definition)
     other        valid grid, none of the above
 
@@ -39,7 +39,7 @@ sys.path.insert(0, str(REPO))
 
 from utils.globals import ITEMS_FILE, LLM_RESULTS_DIR
 
-CATEGORIES = ["concept", "matrix", "duplicate", "other",
+CATEGORIES = ["concept", "literal", "duplicate", "other",
               "unparseable", "truncated", "no_response", "error"]
 
 
@@ -61,7 +61,7 @@ def _missing(x):
     return x is None or (isinstance(x, float) and pd.isna(x))
 
 
-def categorize(row, item, d_matrix, d_concept):
+def categorize(row, item, d_literal, d_concept):
     """Return (category, parsed_grid)."""
     if not _missing(row.get("error")):
         return "error", None
@@ -74,8 +74,8 @@ def categorize(row, item, d_matrix, d_concept):
         return ("truncated" if truncated else "unparseable"), None
     if grid == d_concept:
         return "concept", grid
-    if grid == d_matrix:
-        return "matrix", grid
+    if grid == d_literal:
+        return "literal", grid
     if grid in (item["A"], item["B"], item["C"]):
         return "duplicate", grid
     return "other", grid
@@ -92,7 +92,7 @@ def score_run(raw_path,
               items_path=ITEMS_FILE):
     raw = load_raw(raw_path)
     prompts = json.load(open(prompts_path))
-    answers = dict(zip(prompts["item_ids"], prompts["answers"]))   # item_id -> [D_Matrix, D_Concept]
+    answers = dict(zip(prompts["item_ids"], prompts["answers"]))   # item_id -> [D_Literal, D_Concept]
     items = {i["id"]: i for i in json.load(open(items_path))}
 
     out = []
@@ -100,8 +100,8 @@ def score_run(raw_path,
         row = row.to_dict()
         main_id = row["item_id"].split("_")[0]
         item = items[main_id]
-        d_matrix, d_concept = answers[row["item_id"]]
-        cat, grid = categorize(row, item, d_matrix, d_concept)
+        d_literal, d_concept = answers[row["item_id"]]
+        cat, grid = categorize(row, item, d_literal, d_concept)
         out.append({
             "model": row["model"],
             "item_id": row["item_id"],
@@ -119,7 +119,7 @@ def score_run(raw_path,
             "rt": row.get("rt"),
             # one-hot columns, matching the human data / R preprocessing
             "concept_response": int(cat == "concept"),
-            "matrix_response": int(cat == "matrix"),
+            "literal_response": int(cat == "literal"),
             "duplicate_response": int(cat == "duplicate"),
         })
     df = pd.DataFrame(out)

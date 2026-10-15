@@ -45,12 +45,12 @@ from PIL import Image
 SUBJECT_COLS = ['participant', 'model', 'participant_fk']
 
 # Candidate answers, in the order they are drawn.
-OPTION_MATRICES = ['D_Matrix', 'D_Concept', 'D_Random']
+OPTION_MATRICES = ['D_Literal', 'D_Concept', 'D_Random']
 
 # `choice` -> which matrix that choice corresponds to. Shared by both frames:
-# `Eval` writes matrix/concept/other/duplicate, and `HumanEval` matches it.
+# `Eval` writes literal/concept/other/duplicate, and `HumanEval` matches it.
 CHOICE_TO_MATRIX = {
-    'matrix': 'D_Matrix',
+    'literal': 'D_Literal',
     'concept': 'D_Concept',
     'duplicate': 'C',
     'other': 'D_Random',
@@ -114,10 +114,10 @@ def get_item(items: Dict[str, Dict], item_id: str) -> Dict:
     raise KeyError(f"No item found for '{item_id}' (base id '{base}').")
 
 
-def matrix_target(item: Dict, name: str, matrix_level: Any = None) -> Optional[str]:
-    """The named matrix, respecting the row/pixel condition for D_Matrix."""
-    if name == 'D_Matrix' and str(matrix_level).lower() == 'row':
-        return item.get('D_Matrix_Row', item.get('D_Matrix'))
+def matrix_target(item: Dict, name: str, literal_level: Any = None) -> Optional[str]:
+    """The named matrix, respecting the row/pixel condition for D_Literal."""
+    if name == 'D_Literal' and str(literal_level).lower() == 'row':
+        return item.get('D_Literal_Row', item.get('D_Literal'))
     return item.get(name)
 
 
@@ -246,7 +246,7 @@ def resolve_response(row: pd.Series, item: Dict, task: str = None) -> Tuple[Opti
       answer letter in `response` and the category in `choice`; `HumanEval`
       records the category label. Either way the category names the matrix.
     """
-    matrix_level = row.get('matrix_level')
+    literal_level = row.get('literal_level')
 
     if row.get('no_response'):
         return None, 'No response'
@@ -275,16 +275,19 @@ def resolve_response(row: pd.Series, item: Dict, task: str = None) -> Tuple[Opti
     choice = row.get('choice')
     if choice is not None and not pd.isna(choice) and choice in CHOICE_TO_MATRIX:
         name = CHOICE_TO_MATRIX[choice]
-        return matrix_target(item, name, matrix_level), _format_concept(choice)
+        return matrix_target(item, name, literal_level), _format_concept(choice)
 
     if is_missing:
         return None, 'No response'
 
     response = str(response)
 
-    # A category label stored directly (e.g. 'D_Concept').
+    # A category label stored directly (e.g. 'D_Concept'). The platform still
+    # calls the literal option 'D_Matrix'.
+    if response == 'D_Matrix':
+        response = 'D_Literal'
     if response.startswith('D_') or response == 'C':
-        return matrix_target(item, response, matrix_level), _format_concept(response)
+        return matrix_target(item, response, literal_level), _format_concept(response)
 
     return None, f'Unrecognised: {response}'
 
@@ -346,7 +349,7 @@ def plot_response(
     item_id = str(row.get('item_id', row.get('itemid')))
     item = get_item(items, item_id)
     task = resolve_task(row, items_source, task)
-    matrix_level = row.get('matrix_level')
+    literal_level = row.get('literal_level')
 
     xdim = xdim if xdim is not None else item.get('xdim')
     ydim = item.get('ydim', xdim)
@@ -361,8 +364,8 @@ def plot_response(
     bits = [f'{item_id}', f'{task.capitalize()}', f'{_format_concept(item.get("concept"))}']
     if subject is not None:
         bits.insert(0, f'{subject}')
-    if matrix_level is not None and not pd.isna(matrix_level):
-        bits.append(f'Level: {matrix_level}')
+    if literal_level is not None and not pd.isna(literal_level):
+        bits.append(f'Level: {literal_level}')
     if 'rt' in row.index and not pd.isna(row['rt']):
         bits.append(f'RT: {row["rt"]} ms')
     title = '  |  '.join(str(b) for b in bits)
@@ -370,7 +373,7 @@ def plot_response(
     if task == 'recognition':
         fig = _plot_recognition(row, item, xdim, ydim, title)
     elif task in {'generation', 'discrimination'}:
-        fig = _plot_matrix_task(row, item, xdim, ydim, matrix_level, title, task)
+        fig = _plot_matrix_task(row, item, xdim, ydim, literal_level, title, task)
     else:
         raise ValueError(
             f"Unknown task '{task}'. Expected generation, discrimination "
@@ -385,7 +388,7 @@ def plot_response(
     plt.show()
 
 
-def _plot_matrix_task(row, item, xdim, ydim, matrix_level, title, task):
+def _plot_matrix_task(row, item, xdim, ydim, literal_level, title, task):
     response_matrix, status = resolve_response(row, item, task)
 
     fig = plt.figure(figsize=(6, 5.7))
@@ -407,11 +410,11 @@ def _plot_matrix_task(row, item, xdim, ydim, matrix_level, title, task):
     options_gs = gs[2, :].subgridspec(1, 3, wspace=0.45)
     for idx, name in enumerate(OPTION_MATRICES):
         label = name.replace('_', ' ')
-        if name == 'D_Matrix' and str(matrix_level).lower() == 'row':
+        if name == 'D_Literal' and str(literal_level).lower() == 'row':
             label += ' (row)'
         _draw_grid(
             fig.add_subplot(options_gs[0, idx]),
-            matrix_target(item, name, matrix_level),
+            matrix_target(item, name, literal_level),
             label, xdim, ydim,
         )
 
@@ -616,7 +619,7 @@ class ResponseBrowser:
     def summary(self) -> pd.DataFrame:
         cols = [
             self.subject_col, 'item_id', 'task', 'response', 'choice',
-            'response_type', 'matrix_level', 'rt', 'kidsarc_response_id',
+            'response_type', 'literal_level', 'rt', 'kidsarc_response_id',
         ]
         cols = [c for c in cols if c and c in self.matches.columns]
         return self.matches[cols].copy()
@@ -629,7 +632,7 @@ def _submit_label(state: str, item: Dict) -> str:
     """Name the offered matrix an exact-match submission corresponds to, if any."""
     if _is_blank(state):
         return 'Blank grid'
-    for name, label in [('D_Matrix', 'matrix'), ('D_Matrix_Row', 'matrix (row)'),
+    for name, label in [('D_Literal', 'literal'), ('D_Literal_Row', 'literal (row)'),
                         ('D_Concept', 'concept'), ('C', 'duplicate')]:
         target = item.get(name)
         if target is not None and state == str(target):
@@ -656,7 +659,7 @@ def process_gif(
     Animate one participant's construction of a generation response.
 
     Uses the same layout and colours as `plot_response` for generation:
-    A -> B, C -> Response (animated), then D Matrix / D Concept / D Random.
+    A -> B, C -> Response (animated), then D Literal / D Concept / D Random.
 
     Parameters
     ----------

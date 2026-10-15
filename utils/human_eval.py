@@ -15,11 +15,11 @@ one object per task, exposing a tidy `.df` with one row per response.
 
 Expected response columns: `kidsarc_response_id`, `participant_fk`, `itemid`,
 `response`, `task`. Optional and carried through to `.df` when present:
-`rt`, `matrix_level`, `correct`, `saveitem_timestamp`. Any other columns are
+`rt`, `literal_level`, `correct`, `saveitem_timestamp`. Any other columns are
 ignored, so a wider export is fine.
 
 The response-type columns match `Eval.df` so the two can be concatenated:
-`concept_response`, `matrix_response`, `duplicate_response`, `other_response`.
+`concept_response`, `literal_response`, `duplicate_response`, `other_response`.
 Two columns are added that `Eval` does not have -- `no_response` and
 `response_type` -- see the notes at the bottom of this file.
 """
@@ -41,10 +41,12 @@ HUMAN_ITEMS_FILE = os.path.join(os.path.dirname(ITEMS_FILE), 'old', 'AmbigousARC
 
 TASKS = ['generation', 'discrimination', 'recognition']
 
-# Discrimination responses are stored as labels rather than grids.
+# Discrimination responses are stored as labels rather than grids. The
+# experiment platform still calls the literal option 'D_Matrix'.
 DISCRIMINATION_LABELS = {
     'D_Concept': 'concept',
-    'D_Matrix': 'matrix',
+    'D_Matrix': 'literal',
+    'D_Literal': 'literal',
     'D_Duplicate': 'duplicate',
     'D_Random': 'other',
 }
@@ -82,16 +84,16 @@ def clean_response(response: Any) -> Optional[str]:
     return str(response)
 
 
-def get_matrix_target(item: Dict, matrix_level: Any = None) -> str:
+def get_literal_target(item: Dict, literal_level: Any = None) -> str:
     """
-    The literal ("matrix") answer for an item.
+    The literal answer for an item.
 
     Items shown in the row condition have their own literal answer; everything
-    else uses the pixel-level one. See `prompt_utils.get_d_matrix`.
+    else uses the pixel-level one. See `prompt_utils.get_d_literal`.
     """
-    if str(matrix_level).lower() == 'row':
-        return item['D_Matrix_Row']
-    return item['D_Matrix']
+    if str(literal_level).lower() == 'row':
+        return item['D_Literal_Row']
+    return item['D_Literal']
 
 
 class ParticipantEval:
@@ -141,7 +143,7 @@ class ParticipantEval:
         self.concept_prop = self._prop(self.concept_responses)
         self.other_prop = self._prop(self.other_responses)
         if self.task != 'recognition':
-            self.matrix_prop = self._prop(self.matrix_responses)
+            self.literal_prop = self._prop(self.literal_responses)
             self.duplicate_prop = self._prop(self.duplicate_responses)
         self.no_response_prop = np.mean(self.no_responses) if self.size else np.nan
 
@@ -149,38 +151,38 @@ class ParticipantEval:
 
     def _classify_generation(self):
         """Exact-match the submitted grid against each candidate answer."""
-        matrix_levels = self.data.get('matrix_level', pd.Series([None] * self.size))
+        literal_levels = self.data.get('literal_level', pd.Series([None] * self.size))
 
         self.concept_responses = []
-        self.matrix_responses = []
-        self.matrix_pixel_responses = []
-        self.matrix_row_responses = []
+        self.literal_responses = []
+        self.literal_pixel_responses = []
+        self.literal_row_responses = []
         self.duplicate_responses = []
 
         for response, item, level in zip(
-            self.clean_responses, self.item_records, matrix_levels
+            self.clean_responses, self.item_records, literal_levels
         ):
             if response is None:
                 for lst in (
-                    self.concept_responses, self.matrix_responses,
-                    self.matrix_pixel_responses, self.matrix_row_responses,
+                    self.concept_responses, self.literal_responses,
+                    self.literal_pixel_responses, self.literal_row_responses,
                     self.duplicate_responses,
                 ):
                     lst.append(0)
                 continue
 
             self.concept_responses.append(int(response == item['D_Concept']))
-            self.matrix_responses.append(int(response == get_matrix_target(item, level)))
+            self.literal_responses.append(int(response == get_literal_target(item, level)))
             # Generation responses are free-form grids, so they can be scored
             # against both literal rules regardless of which was assigned.
-            self.matrix_pixel_responses.append(int(response == item['D_Matrix']))
-            self.matrix_row_responses.append(int(response == item['D_Matrix_Row']))
+            self.literal_pixel_responses.append(int(response == item['D_Literal']))
+            self.literal_row_responses.append(int(response == item['D_Literal_Row']))
             self.duplicate_responses.append(
                 int(response in [item['A'], item['B'], item['C']])
             )
 
         self.other_responses = self._residual(
-            self.concept_responses, self.matrix_responses, self.duplicate_responses
+            self.concept_responses, self.literal_responses, self.duplicate_responses
         )
         # Generation has no explicit answer choice; `response_type` carries it.
         self.choices = None
@@ -190,8 +192,9 @@ class ParticipantEval:
         The stored response is already the chosen option's label, so the
         classification is a lookup rather than a comparison.
 
-        Note that the label is `D_Matrix` whether the participant saw the
-        pixel or the row variant; `matrix_level` records which.
+        Note that the label is `D_Matrix` (platform name for the literal
+        option) whether the participant saw the
+        pixel or the row variant; `literal_level` records which.
         """
         self.choices = [
             DISCRIMINATION_LABELS.get(r) if r is not None else None
@@ -205,19 +208,19 @@ class ParticipantEval:
             raise ValueError(f'Unknown discrimination response(s): {sorted(unknown)}')
 
         self.concept_responses = [int(c == 'concept') for c in self.choices]
-        self.matrix_responses = [int(c == 'matrix') for c in self.choices]
+        self.literal_responses = [int(c == 'literal') for c in self.choices]
         self.duplicate_responses = [int(c == 'duplicate') for c in self.choices]
         self.other_responses = [int(c == 'other') for c in self.choices]
 
         # The stored label is `D_Matrix` in both conditions, so which literal
-        # rule the participant endorsed is given by `matrix_level`.
-        levels = self.data.get('matrix_level', pd.Series([None] * self.size))
+        # rule the participant endorsed is given by `literal_level`.
+        levels = self.data.get('literal_level', pd.Series([None] * self.size))
         levels = [str(l).lower() for l in levels]
-        self.matrix_pixel_responses = [
-            int(m and l == 'pixel') for m, l in zip(self.matrix_responses, levels)
+        self.literal_pixel_responses = [
+            int(m and l == 'pixel') for m, l in zip(self.literal_responses, levels)
         ]
-        self.matrix_row_responses = [
-            int(m and l == 'row') for m, l in zip(self.matrix_responses, levels)
+        self.literal_row_responses = [
+            int(m and l == 'row') for m, l in zip(self.literal_responses, levels)
         ]
 
     def _classify_recognition(self):
@@ -250,8 +253,8 @@ class ParticipantEval:
                 types.append('no_response')
             elif self.concept_responses[i]:
                 types.append('concept')
-            elif self.task != 'recognition' and self.matrix_responses[i]:
-                types.append('matrix')
+            elif self.task != 'recognition' and self.literal_responses[i]:
+                types.append('literal')
             elif self.task != 'recognition' and self.duplicate_responses[i]:
                 types.append('duplicate')
             else:
@@ -308,7 +311,8 @@ class HumanEval:
         # Responses
         if isinstance(data, str):
             data = pd.read_csv(data)
-        data = data.copy()
+        # The raw platform export calls the literal-level column `matrix_level`.
+        data = data.rename(columns={'matrix_level': 'literal_level'})
         data['task'] = data['task'].astype(str).str.lower()
         data = data[data['task'] == self.task]
 
@@ -372,9 +376,9 @@ class HumanEval:
                 'no_response': p.no_responses,
             }
             if self.task != 'recognition':
-                cfg['matrix_response'] = p.matrix_responses
-                cfg['matrix_pixel_response'] = p.matrix_pixel_responses
-                cfg['matrix_row_response'] = p.matrix_row_responses
+                cfg['literal_response'] = p.literal_responses
+                cfg['literal_pixel_response'] = p.literal_pixel_responses
+                cfg['literal_row_response'] = p.literal_row_responses
                 cfg['duplicate_response'] = p.duplicate_responses
 
             if p.choices is not None:
@@ -385,7 +389,7 @@ class HumanEval:
             # Carry through columns that are useful for filtering downstream.
             # Anything present in the source is kept; nothing is required.
             for col in [
-                'rt', 'matrix_level', 'kidsarc_response_id',
+                'rt', 'literal_level', 'kidsarc_response_id',
                 'correct', 'saveitem_timestamp',
             ]:
                 if col in p.data.columns:
@@ -401,7 +405,7 @@ class HumanEval:
         s += f'Number of responses: {len(self.df)}\n\n'
         s += f'Concept: {self.df["concept_response"].mean():.2f}\n'
         if self.task != 'recognition':
-            s += f'Matrix: {self.df["matrix_response"].mean():.2f}\n'
+            s += f'Literal: {self.df["literal_response"].mean():.2f}\n'
             s += f'Duplicate: {self.df["duplicate_response"].mean():.2f}\n'
         s += f'Other: {self.df["other_response"].mean():.2f}\n'
         s += f'No response: {self.df["no_response"].mean():.2f}'
@@ -430,8 +434,8 @@ class HumanEval:
 #    residual for generation but specifically `D_Random` for discrimination.
 #    Here `choice == 'other'` still identifies D_Random in discrimination.
 #
-# 3. The row-level literal answer is used when `matrix_level == 'row'`, and
-#    `matrix_pixel_response` / `matrix_row_response` are reported separately.
+# 3. The row-level literal answer is used when `literal_level == 'row'`, and
+#    `literal_pixel_response` / `literal_row_response` are reported separately.
 #    `human_preprocessing.score_discrimination` compares against the string
 #    'D_Matrix_Row', which does not occur in the response data, so its
 #    row-literal score is always zero.

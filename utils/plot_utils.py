@@ -59,7 +59,7 @@ def plot_matrix(
 def plot_item(
     arrays: List[np.array],
     title: str = None,
-    labels: List[str] = ['A', 'B', 'C', 'D Concept', 'D Matrix'],
+    labels: List[str] = ['A', 'B', 'C', 'D Concept', 'D Literal'],
     return_fig: bool = False,
     empty_idx: List[int] = None,
     n_row: int = None,

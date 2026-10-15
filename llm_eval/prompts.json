@@ -2111,7 +2111,7 @@
     "task": "generation",
     "example_item": "different",
     "encoding": "int",
-    "d_matrix_level": "pixel",
+    "d_literal_level": "pixel",
     "random_mat": true,
     "duplicate": null,
     "concept_answer_n": 4,
